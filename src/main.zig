@@ -25,6 +25,14 @@ pub fn main() !void {
         const encoder = graphics_context.device.createCommandEncoder(null);
         defer encoder.release();
 
+        {
+            const render_pass_encoder = zgpu.beginRenderPassSimple(encoder, .clear, current_texture_view, .{ .r = std.math.sin(zglfw.getTime()) * 0.5 + 0.5, .g = std.math.cos(zglfw.getTime()) * 0.5 + 0.5, .b = 0.0, .a = 1.0 }, null, null);
+            defer {
+                render_pass_encoder.end();
+                render_pass_encoder.release();
+            }
+        }
+
         const command_buffer = encoder.finish(null);
         graphics_context.submit(&.{command_buffer});
 
