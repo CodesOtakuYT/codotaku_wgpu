@@ -3,6 +3,7 @@ const zglfw = @import("libs/zig-gamedev/libs/zglfw/build.zig");
 const zgpu = @import("libs/zig-gamedev/libs/zgpu/build.zig");
 const zpool = @import("libs/zig-gamedev/libs/zpool/build.zig");
 const zgui = @import("libs/zig-gamedev/libs/zgui/build.zig");
+const zmath = @import("libs/zig-gamedev/libs/zmath/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -80,8 +81,10 @@ pub fn build(b: *std.Build) void {
     const zgui_pkg = zgui.package(b, target, optimize, .{
         .options = .{ .backend = .glfw_wgpu },
     });
+    const zmath_pkg = zmath.package(b, target, optimize, .{});
 
     zglfw_pkg.link(exe);
     zgpu_pkg.link(exe);
     zgui_pkg.link(exe);
+    zmath_pkg.link(exe);
 }
