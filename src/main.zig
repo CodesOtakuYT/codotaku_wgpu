@@ -133,7 +133,7 @@ pub fn main() !void {
     };
 
     _ = zgui.io.addFontFromFile(
-        "Roboto-Medium.ttf",
+        "assets/roboto/Roboto-Medium.ttf",
         std.math.floor(16.0 * scale_factor),
     );
 
