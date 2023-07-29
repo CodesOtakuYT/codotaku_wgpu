@@ -4,31 +4,7 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zmath = @import("zmath");
 
-// zig fmt: off
-const vertex_shader_source =
-\\  @group(0) @binding(0) var<uniform> object_to_clip: mat4x4<f32>;
-\\  struct VertexOut {
-\\      @builtin(position) position_clip: vec4<f32>,
-\\      @location(0) color: vec3<f32>,
-\\  }
-\\  @vertex fn main(
-\\      @location(0) position: vec3<f32>,
-\\      @location(1) color: vec3<f32>,
-\\  ) -> VertexOut {
-\\      var output: VertexOut;
-\\      output.position_clip = vec4(position, 1.0) * object_to_clip;
-\\      output.color = color;
-\\      return output;
-\\  }
-;
-const fragment_shader_source =
-\\  @fragment fn main(
-\\      @location(0) color: vec3<f32>,
-\\  ) -> @location(0) vec4<f32> {
-\\      return vec4(color, 1.0);
-\\  }
-// zig fmt: on
-;
+const shader_source = @embedFile("assets/shaders/shader.wgsl");
 
 pub fn main() !void {
     var general_purpose_allocator = std.heap.GeneralPurposeAllocator(.{}){};
@@ -44,15 +20,11 @@ pub fn main() !void {
     const graphics_context = try zgpu.GraphicsContext.create(allocator, window);
     defer graphics_context.destroy(allocator);
 
-    const vertex_shader_module = zgpu.createWgslShaderModule(graphics_context.device, vertex_shader_source, "vertex shader");
-    defer vertex_shader_module.release();
-
-    const fragment_shader_module = zgpu.createWgslShaderModule(graphics_context.device, fragment_shader_source, "vertex shader");
-    defer fragment_shader_module.release();
+    const shader_module = zgpu.createWgslShaderModule(graphics_context.device, shader_source, "shader module");
+    defer shader_module.release();
 
     const Vertex = struct {
         position: [3]f32,
-        color: [3]f32,
     };
 
     const vertex_attributes = [_]zgpu.wgpu.VertexAttribute{
@@ -60,11 +32,6 @@ pub fn main() !void {
             .format = .float32x3,
             .offset = 0,
             .shader_location = 0,
-        },
-        .{
-            .format = .float32x3,
-            .offset = @offsetOf(Vertex, "color"),
-            .shader_location = 1,
         },
     };
 
@@ -90,16 +57,19 @@ pub fn main() !void {
 
     const pipeline_descriptor = zgpu.wgpu.RenderPipelineDescriptor{
         .vertex = .{
-            .module = vertex_shader_module,
-            .entry_point = "main",
+            .module = shader_module,
+            .entry_point = "vertex",
             .buffer_count = vertex_buffer_layouts.len,
             .buffers = &vertex_buffer_layouts,
         },
         .fragment = &.{
-            .module = fragment_shader_module,
-            .entry_point = "main",
+            .module = shader_module,
+            .entry_point = "fragment",
             .target_count = color_targets.len,
             .targets = &color_targets,
+        },
+        .primitive = .{
+            .cull_mode = .back,
         },
     };
     const render_pipeline_handle = graphics_context.createRenderPipeline(pipeline_layout, pipeline_descriptor);
@@ -108,21 +78,29 @@ pub fn main() !void {
         .{ .binding = 0, .buffer_handle = graphics_context.uniforms.buffer, .offset = 0, .size = @sizeOf(zmath.Mat) },
     });
 
+    const vertex_data = [_]Vertex{
+        .{ .position = [3]f32{ 0.0, 0.5, 0.0 } },
+        .{ .position = [3]f32{ -0.5, -0.5, 0.0 } },
+        .{ .position = [3]f32{ 0.5, -0.5, 0.0 } },
+    };
+
     const vertex_buffer = graphics_context.createBuffer(.{
         .usage = .{ .copy_dst = true, .vertex = true },
-        .size = 3 * @sizeOf(Vertex),
+        .size = @sizeOf(@TypeOf(vertex_data)),
     });
-    const vertex_data = [_]Vertex{
-        .{ .position = [3]f32{ 0.0, 0.5, 0.0 }, .color = [3]f32{ 1.0, 0.0, 0.0 } },
-        .{ .position = [3]f32{ -0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 1.0, 0.0 } },
-        .{ .position = [3]f32{ 0.5, -0.5, 0.0 }, .color = [3]f32{ 0.0, 0.0, 1.0 } },
-    };
     graphics_context.queue.writeBuffer(
         graphics_context.lookupResource(vertex_buffer).?,
         0,
         Vertex,
         vertex_data[0..],
     );
+
+    const index_data = [_]u32{ 0, 1, 2 };
+    const index_buffer = graphics_context.createBuffer(.{
+        .usage = .{ .copy_dst = true, .index = true },
+        .size = @sizeOf(@TypeOf(index_data)),
+    });
+    graphics_context.queue.writeBuffer(graphics_context.lookupResource(index_buffer).?, 0, u32, &index_data);
 
     zgui.init(allocator);
     defer zgui.deinit();
@@ -133,7 +111,7 @@ pub fn main() !void {
     };
 
     _ = zgui.io.addFontFromFile(
-        "assets/roboto/Roboto-Medium.ttf",
+        "src/assets/fonts/roboto/Roboto-Medium.ttf",
         std.math.floor(16.0 * scale_factor),
     );
 
@@ -150,6 +128,8 @@ pub fn main() !void {
 
     while (!window.shouldClose()) {
         zglfw.pollEvents();
+
+        const seconds_elapsed = @as(f32, @floatCast(graphics_context.stats.time));
 
         zgui.backend.newFrame(
             graphics_context.swapchain_descriptor.width,
@@ -184,6 +164,7 @@ pub fn main() !void {
         {
             const render_pipeline = graphics_context.lookupResource(render_pipeline_handle).?;
             const vertex_buffer_info = graphics_context.lookupResourceInfo(vertex_buffer).?;
+            const index_buffer_info = graphics_context.lookupResourceInfo(index_buffer).?;
             const bind_group = graphics_context.lookupResource(bind_group_handle).?;
 
             const render_pass_encoder = zgpu.beginRenderPassSimple(
@@ -200,15 +181,16 @@ pub fn main() !void {
                 null,
             );
             render_pass_encoder.setVertexBuffer(0, vertex_buffer_info.gpuobj.?, 0, vertex_buffer_info.size);
+            render_pass_encoder.setIndexBuffer(index_buffer_info.gpuobj.?, .uint32, 0, index_buffer_info.size);
             render_pass_encoder.setPipeline(render_pipeline);
 
-            const object_to_world = zmath.mul(zmath.rotationY(0), zmath.translation(-1.0, 0.0, 0.0));
+            const object_to_world = zmath.mul(zmath.rotationY(seconds_elapsed), zmath.translation(-1.0, 0.0, 0.0));
             const object_to_clip = zmath.mul(object_to_world, camera_world_to_clip);
 
             const mem = graphics_context.uniformsAllocate(zmath.Mat, 1);
             mem.slice[0] = zmath.transpose(object_to_clip);
             render_pass_encoder.setBindGroup(0, bind_group, &.{mem.offset});
-            render_pass_encoder.draw(3, 1, 0, 0);
+            render_pass_encoder.drawIndexed(index_data.len, 1, 0, 0, 0);
             defer {
                 render_pass_encoder.end();
                 render_pass_encoder.release();
